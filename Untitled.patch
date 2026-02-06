@@ -1,0 +1,611 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2575.7">
+  <style type="text/css">
+    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica}
+    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica; min-height: 14.0px}
+  </style>
+</head>
+<body>
+<p class="p1">diff --git a/16.6_ESB_IMMEDIATE/16.6_ESB_IMMEDIATE.ino b/16.6_ESB_IMMEDIATE/16.6_ESB_IMMEDIATE.ino</p>
+<p class="p1">index 6ff51d7187f8d64f7873d9caa57a22d838a954c2..7f6025263d949bdefd9a55024f194b66ea4aec09 100644</p>
+<p class="p1">--- a/16.6_ESB_IMMEDIATE/16.6_ESB_IMMEDIATE.ino</p>
+<p class="p1">+++ b/16.6_ESB_IMMEDIATE/16.6_ESB_IMMEDIATE.ino</p>
+<p class="p1">@@ -1,50 +1,63 @@</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;Arduino.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "Adafruit_TinyUSB.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_to_nrf.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;Adafruit_GFX.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;Adafruit_ST7789.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;SPI.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "InternalFileSystem.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "flash/flash_nrf5x.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "variant.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_power.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_gpio.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_uart.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_twi.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_spi.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;stdarg.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;math.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;algorithm&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include "nrf_radio.h"</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;bluefruit.h&gt;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#include &lt;avr/pgmspace.h&gt;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>// --- WebUSB Configuration ---</p>
+<p class="p1"><span class="Apple-converted-space"> </span>Adafruit_USBD_WebUSB webusb;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>WEBUSB_URL_DEF(landingPage, 1, "diningwork.space/"); // Change to your desired URL</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1">+#define ESB_BRIDGE_MAGIC 0xFA</p>
+<p class="p1">+#define ESB_BRIDGE_PAYLOAD_SIZE 28</p>
+<p class="p1">+#define ESB_BRIDGE_POLL_INTERVAL_MS 10</p>
+<p class="p1">+#define ESB_BRIDGE_LISTEN_WINDOW_MS 3</p>
+<p class="p1">+</p>
+<p class="p1">+struct EsbBridgePacket {</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>uint8_t magic;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>uint8_t msgId;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>uint8_t chunkIndex;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>uint8_t totalChunks;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>char payload[ESB_BRIDGE_PAYLOAD_SIZE];</p>
+<p class="p1">+};</p>
+<p class="p1">+</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_CS 11</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_DC 12</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_RST 20</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_MOSI 19</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_SCK 18</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define TFT_BL 10</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_BG 0xFFFF</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_FG 0x0000</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_ACCENT 0x0000</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_INACTIVE 0xC618</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_INDICATOR_ON 0x0000</p>
+<p class="p1"><span class="Apple-converted-space"> </span>#define THEME_INDICATOR_OFF 0xFFFF</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>SPIClass customSPI(NRF_SPIM3, -1, TFT_SCK, TFT_MOSI);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>Adafruit_ST7789 tft = Adafruit_ST7789(&amp;customSPI, TFT_CS, TFT_DC, TFT_RST);</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>const int16_t SCREEN_WIDTH = 240;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>const int16_t SCREEN_HEIGHT = 280;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>Adafruit_USBD_MIDI usb_midi;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>nrf_to_nrf nrf;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>BLEDfu bledfu;</p>
+<p class="p1"><span class="Apple-converted-space"> </span>BLEDis bledis;</p>
+<p class="p1">@@ -295,86 +308,184 @@ void handleSetupInput();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void sendCC(uint8_t cc, uint8_t value);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void sendPotCC(uint8_t potIndex, uint8_t value);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void resetRadio();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void idleRadioCheck();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void enterSystemOff(ShutdownReason reason = NORMAL);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void selectChannel(int channel);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>int readMedianADC(int analogPin);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void blinkAssignedInputLabelAndIndicator();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void clearBlinkingArea(uint8_t inputIndex, bool isCCAssignmentMode);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawFooterInstructions(const __FlashStringHelper* text);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawActionFooter(const __FlashStringHelper* left, const __FlashStringHelper* center, const __FlashStringHelper* right);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawDeviceSetupMenu();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawBluetoothMenu();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void partialRedrawBluetoothMenu(uint8_t oldCursor, uint8_t newCursor);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void handleScreenFade();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void line_state_callback(bool connected);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void startBLE();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void stopBLE();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawBleConnectionStatus();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void performEsbSweep();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawEsbSweepScreen(uint8_t channel, uint8_t sample, uint8_t acks, bool initial);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawEsbConnectMenu();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void partialRedrawEsbConnectMenu(uint8_t oldCursor, uint8_t newCursor);</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>// --- WebUSB Functions ---</p>
+<p class="p1">-void sendSettingsToWeb() {</p>
+<p class="p1">-<span class="Apple-converted-space">    </span>if (!webusb.connected()) return;</p>
+<p class="p1">+String buildSettingsJson() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>String json = "{";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"activeBank\":" + String(globalSettings.activeBank) + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"brightness\":" + String(globalSettings.brightness) + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"midiChannel\":" + String(currentBankSettings.midiChannel) + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"buttonMode\":" + String(currentBankSettings.buttonMode) + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"esbChannel\":" + String(globalSettings.esbChannel) + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"bleOn\":" + String(bleRunning ? "true" : "false") + ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"blePeerName\":\"" + String(blePeerName) + "\",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"labels\":[";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>for (int i = 0; i &lt; TOTAL_ASSIGNABLE_INPUTS; i++) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>json += "\"";</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (i &lt; NUM_ANALOG_POTS) { json += currentBankSettings.potLabels[i]; }</p>
+<p class="p1"><span class="Apple-converted-space">         </span>else { json += currentBankSettings.buttonLabels[i - NUM_ANALOG_POTS]; }</p>
+<p class="p1"><span class="Apple-converted-space">         </span>json += "\"";</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (i &lt; TOTAL_ASSIGNABLE_INPUTS - 1) json += ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "],";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"ccs\":[";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>for (int i = 0; i &lt; TOTAL_ASSIGNABLE_INPUTS; i++) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>json += String(currentBankSettings.assignableCCs[i]);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (i &lt; TOTAL_ASSIGNABLE_INPUTS - 1) json += ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "],";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "\"currentPotValues\":[";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>for (int i = 0; i &lt; NUM_ANALOG_POTS; i++) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>json += String(lastSentCCValue[i]);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (i &lt; NUM_ANALOG_POTS - 1) json += ",";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>json += "]";</p>
+<p class="p1">-<span class="Apple-converted-space">    </span>json += "}\n";</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>json += "}";</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>return json;</p>
+<p class="p1">+}</p>
+<p class="p1">+</p>
+<p class="p1">+void sendSettingsToWeb() {</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>if (!webusb.connected()) return;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>String json = buildSettingsJson();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>json += "\n";</p>
+<p class="p1"><span class="Apple-converted-space">     </span>webusb.print(json);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>webusb.flush();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1">+bool processCommandString(const String&amp; command, bool allowWebNotifications) {</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>bool shouldSendSettings = false;</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>if (command.equals("get_settings")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_brightness=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int brightness_8bit = command.substring(15).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>brightness_8bit = constrain(brightness_8bit, 3, 255);</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (globalSettings.brightness != brightness_8bit) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>brightnessBeforeFade_14bit = currentBrightness_14bit;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>globalSettings.brightness = brightness_8bit;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>screenState = FADING_UP;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>fadeStartTime = micros();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_midi_ch=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int channel = command.substring(12).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>currentBankSettings.midiChannel = constrain(channel, 1, 16);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_cc=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int firstComma = command.indexOf(',');</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int index = command.substring(7, firstComma).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int value = command.substring(firstComma + 1).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (index &gt;= 0 &amp;&amp; index &lt; TOTAL_ASSIGNABLE_INPUTS) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>currentBankSettings.assignableCCs[index] = constrain(value, 0, 127);</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>saveCurrentBankSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_label=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int firstComma = command.indexOf(',');</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int index = command.substring(10, firstComma).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>String label = command.substring(firstComma + 1);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (index &gt;= 0 &amp;&amp; index &lt; TOTAL_ASSIGNABLE_INPUTS) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>if (index &lt; NUM_ANALOG_POTS) {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>strncpy(currentBankSettings.potLabels[index], label.c_str(), POT_LABEL_LENGTH);</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>currentBankSettings.potLabels[index][POT_LABEL_LENGTH] = '\0';</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>} else {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>strncpy(currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS], label.c_str(), POT_LABEL_LENGTH);</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS][POT_LABEL_LENGTH] = '\0';</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>saveCurrentBankSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>forceFullRedraw = true;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_bank=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int bank = command.substring(9).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (bank &gt;= 0 &amp;&amp; bank &lt; NUM_BANKS) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>globalSettings.activeBank = bank;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>saveGlobalSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>loadSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>activeMidiSettings = &amp;currentBankSettings;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>updateMainScreenLabelsOnly(currentBankSettings, false);</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>forceFullRedraw = true;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>if (allowWebNotifications &amp;&amp; webusb.connected()) {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>webusb.print("bank_changed:" + String(globalSettings.activeBank) + "\n");</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>webusb.flush();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_button_mode=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int mode = command.substring(16).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>currentBankSettings.buttonMode = constrain(mode, 0, 1);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>saveCurrentBankSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.startsWith("set_esb_ch=")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int esb_ch = command.substring(11).toInt();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>globalSettings.esbChannel = esb_ch;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>saveGlobalSettings();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>resetRadio();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.equals("toggle_ble")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (allowWebNotifications) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>if (bleRunning) {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>stopBLE();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>} else {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>startBLE();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>shouldSendSettings = true;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>} else if (command.equals("start_cal")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>currentAppMode = SETUP_MENU;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>currentSetupSubMode = CALIBRATION_MAIN;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>menuCursor = 1;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>subMenuCursor = 1;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>drawCalibrationMenu();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>setupStartTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>return shouldSendSettings;</p>
+<p class="p1">+}</p>
+<p class="p1">+</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void setBacklight(uint16_t value) {</p>
+<p class="p1"><span class="Apple-converted-space">   </span>currentBrightness_14bit = constrain(value, 0, BRIGHTNESS_MAX_14BIT);</p>
+<p class="p1"><span class="Apple-converted-space">   </span>analogWrite(TFT_BL, currentBrightness_14bit);</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void drawEsbSweepScreen(uint8_t channel, uint8_t sample, uint8_t acks, bool initial) {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (!tftConnected) return;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Static variables to track the last drawn state to avoid unnecessary redraws.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static uint8_t last_acks = 255;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static int last_progress_w = -1;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// When a new channel scan starts (`initial` is true)</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (initial) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>// Reset per-channel trackers</p>
+<p class="p1"><span class="Apple-converted-space">         </span>last_acks = 0;<span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>last_progress_w = 0;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>tft.startWrite();</p>
+<p class="p1"><span class="Apple-converted-space">         </span>tft.setFont(NULL);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>tft.setTextSize(1.8);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>tft.setTextColor(THEME_FG);</p>
+<p class="p2"><span class="Apple-converted-space">         </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>// Clear area for channel number and draw the new one</p>
+<p class="p1"><span class="Apple-converted-space">         </span>tft.fillRect(120, 78, 80, 20, THEME_BG);<span class="Apple-converted-space"> </span></p>
+<p class="p1">@@ -575,126 +686,58 @@ void performEsbSweep() {</p>
+<p class="p1"><span class="Apple-converted-space">             </span>menuCursor = 0;</p>
+<p class="p1"><span class="Apple-converted-space">             </span>drawEsbConnectMenu();</p>
+<p class="p1"><span class="Apple-converted-space">             </span>sweepChannelIndex = 0;</p>
+<p class="p1"><span class="Apple-converted-space">             </span>isFirstScanOfSweep = true; // ADDED: Reset the flag when the sweep is done</p>
+<p class="p1"><span class="Apple-converted-space">             </span>resetRadio(); // This will revert retries back to (0, 5)</p>
+<p class="p1"><span class="Apple-converted-space">             </span>setupStartTime = millis(); // FIX: Reset setup timeout timer</p>
+<p class="p1"><span class="Apple-converted-space">         </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void handleWebUSBCommands() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static bool requestStartBle = false;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static unsigned long startBleDelayTime = 0;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>const unsigned long BLE_START_DELAY_MS = 1;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (requestStartBle &amp;&amp; millis() - startBleDelayTime &gt;= BLE_START_DELAY_MS) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>requestStartBle = false;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>startBLE();</p>
+<p class="p1"><span class="Apple-converted-space">         </span>return;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (webusb.available()) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>String command = webusb.readStringUntil('\n');</p>
+<p class="p1"><span class="Apple-converted-space">         </span>command.trim();</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1">-<span class="Apple-converted-space">        </span>if (command.equals("get_settings")) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (command.equals("toggle_ble") &amp;&amp; !bleRunning) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>requestStartBle = true;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>startBleDelayTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>return;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (processCommandString(command, true)) {</p>
+<p class="p1"><span class="Apple-converted-space">             </span>sendSettingsToWeb();</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_brightness=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int brightness_8bit = command.substring(15).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>brightness_8bit = constrain(brightness_8bit, 3, 255);</p>
+<p class="p1">-</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>if (globalSettings.brightness != brightness_8bit) {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>brightnessBeforeFade_14bit = currentBrightness_14bit;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>globalSettings.brightness = brightness_8bit;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>screenState = FADING_UP;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>fadeStartTime = micros();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_midi_ch=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int channel = command.substring(12).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>currentBankSettings.midiChannel = constrain(channel, 1, 16);</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_cc=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int firstComma = command.indexOf(',');</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int index = command.substring(7, firstComma).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int value = command.substring(firstComma + 1).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>if (index &gt;= 0 &amp;&amp; index &lt; TOTAL_ASSIGNABLE_INPUTS) {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>currentBankSettings.assignableCCs[index] = constrain(value, 0, 127);</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>saveCurrentBankSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_label=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int firstComma = command.indexOf(',');</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int index = command.substring(10, firstComma).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>String label = command.substring(firstComma + 1);</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>if (index &gt;= 0 &amp;&amp; index &lt; TOTAL_ASSIGNABLE_INPUTS) {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>if (index &lt; NUM_ANALOG_POTS) {</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>strncpy(currentBankSettings.potLabels[index], label.c_str(), POT_LABEL_LENGTH);</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>currentBankSettings.potLabels[index][POT_LABEL_LENGTH] = '\0';</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>} else {</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>strncpy(currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS], label.c_str(), POT_LABEL_LENGTH);</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS][POT_LABEL_LENGTH] = '\0';</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>saveCurrentBankSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>forceFullRedraw = true;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_bank=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int bank = command.substring(9).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>if (bank &gt;= 0 &amp;&amp; bank &lt; NUM_BANKS) {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>globalSettings.activeBank = bank;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>saveGlobalSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>loadSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>activeMidiSettings = &amp;currentBankSettings;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>updateMainScreenLabelsOnly(currentBankSettings, false);</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>forceFullRedraw = true;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>if (webusb.connected()) {</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>webusb.print("bank_changed:" + String(globalSettings.activeBank) + "\n");</p>
+<p class="p1">-<span class="Apple-converted-space">                    </span>webusb.flush();</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>sendSettingsToWeb();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_button_mode=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int mode = command.substring(16).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>currentBankSettings.buttonMode = constrain(mode, 0, 1);</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>saveCurrentBankSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.startsWith("set_esb_ch=")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>int esb_ch = command.substring(11).toInt();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>globalSettings.esbChannel = esb_ch;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>saveGlobalSettings();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>resetRadio();</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.equals("toggle_ble")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>if (bleRunning) {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>stopBLE();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>} else {</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>requestStartBle = true;</p>
+<p class="p1">-<span class="Apple-converted-space">                </span>startBleDelayTime = millis();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">-<span class="Apple-converted-space">        </span>} else if (command.equals("start_cal")) {</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>currentAppMode = SETUP_MENU;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>currentSetupSubMode = CALIBRATION_MAIN;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>menuCursor = 1;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>subMenuCursor = 1;</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>drawCalibrationMenu();</p>
+<p class="p1">-<span class="Apple-converted-space">            </span>setupStartTime = millis();</p>
+<p class="p1"><span class="Apple-converted-space">         </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void line_state_callback(bool connected) {}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void connect_callback(uint16_t conn_handle) {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>connHandle = conn_handle;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>BLEConnection* conn = Bluefruit.Connection(conn_handle);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (conn) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>conn-&gt;getPeerName(blePeerName, sizeof(blePeerName));</p>
+<p class="p1"><span class="Apple-converted-space">         </span>conn-&gt;requestConnectionParameter(6, 0, 500);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>forceFullRedraw = true;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>sendSettingsToWeb();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void disconnect_callback(uint16_t conn_handle, uint8_t reason) {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>connHandle = BLE_CONN_HANDLE_INVALID;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>memset(blePeerName, 0, sizeof(blePeerName));</p>
+<p class="p1"><span class="Apple-converted-space">     </span>forceFullRedraw = true;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>sendSettingsToWeb();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void startBLE() {</p>
+<p class="p1">@@ -1299,64 +1342,152 @@ void updatePotVisual(uint8_t potIndex, uint8_t newCCValue, const BankSettings&amp; s</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (newFillHeight &gt; oldFillHeight) {</p>
+<p class="p1"><span class="Apple-converted-space">             </span>int diffHeight = newFillHeight - oldFillHeight;</p>
+<p class="p1"><span class="Apple-converted-space">             </span>int yPos = bar_y_start + (barMaxHeight - newFillHeight);</p>
+<p class="p1"><span class="Apple-converted-space">             </span>tft.fillRect(barX, yPos, barWidth, diffHeight, THEME_FG);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>} else if (newFillHeight &lt; oldFillHeight) {</p>
+<p class="p1"><span class="Apple-converted-space">             </span>int diffHeight = oldFillHeight - newFillHeight;</p>
+<p class="p1"><span class="Apple-converted-space">             </span>int yPos = bar_y_start + (barMaxHeight - oldFillHeight);</p>
+<p class="p1"><span class="Apple-converted-space">             </span>tft.fillRect(barX, yPos, barWidth, diffHeight, THEME_INACTIVE);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>}</p>
+<p class="p1"><span class="Apple-converted-space">         </span>lastRawValueForDisplay[potIndex] = newRawValueApprox;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>tft.endWrite();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void resetRadio() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Power down the radio if it's currently active to ensure settings are applied.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (radioActive) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>nrf.powerDown();</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Re-initialize the radio with the current global settings.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.begin();<span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.setPALevel(NRF_PA_MAX);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf_radio_txpower_set(NRF_RADIO, NRF_RADIO_TXPOWER_POS8DBM);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.setAutoAck(true);<span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.setRetries(0, 5); // Set standard retries</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>nrf.enableDynamicPayloads(32);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.setChannel(globalSettings.esbChannel); // Apply the ESB channel from global settings</p>
+<p class="p1"><span class="Apple-converted-space">     </span>nrf.stopListening();<span class="Apple-converted-space"> </span></p>
+<p class="p2"><span class="Apple-converted-space">     </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Mark the radio as active and update the last activity timestamp.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>radioActive = true;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>lastRadioActivityTime = millis();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void idleRadioCheck() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (radioActive &amp;&amp; millis() - lastRadioActivityTime &gt; NRF_IDLE_TIMEOUT_MS) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>nrf.powerDown(); radioActive = false;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1">+void sendEsbBridgeResponse(uint8_t msgId, const String&amp; response) {</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>int totalChunks = (response.length() + ESB_BRIDGE_PAYLOAD_SIZE - 1) / ESB_BRIDGE_PAYLOAD_SIZE;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>if (totalChunks == 0) totalChunks = 1;</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>for (int chunkIndex = 0; chunkIndex &lt; totalChunks; chunkIndex++) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>EsbBridgePacket packet = {};</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>packet.magic = ESB_BRIDGE_MAGIC;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>packet.msgId = msgId;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>packet.chunkIndex = chunkIndex;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>packet.totalChunks = totalChunks;</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int startIndex = chunkIndex * ESB_BRIDGE_PAYLOAD_SIZE;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>int chunkLength = min(ESB_BRIDGE_PAYLOAD_SIZE, response.length() - startIndex);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>for (int i = 0; i &lt; chunkLength; i++) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>packet.payload[i] = response[startIndex + i];</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>nrf.stopListening();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>nrf.write(&amp;packet, 4 + chunkLength);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>delayMicroseconds(200);</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>}</p>
+<p class="p1">+}</p>
+<p class="p1">+</p>
+<p class="p1">+void handleEsbBridgeCommands() {</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>static unsigned long lastPollTime = 0;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>if (!radioActive) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>resetRadio();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>unsigned long currentTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>if (currentTime - lastPollTime &lt; ESB_BRIDGE_POLL_INTERVAL_MS) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>return;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>lastPollTime = currentTime;</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>nrf.startListening();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>unsigned long startTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>while (millis() - startTime &lt; ESB_BRIDGE_LISTEN_WINDOW_MS) {</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (!nrf.available()) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>continue;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>uint8_t bytes = nrf.getDynamicPayloadSize();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (bytes &lt; 4) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>uint8_t discard[32];</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>nrf.read(discard, min(bytes, uint8_t(sizeof(discard))));</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>continue;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>EsbBridgePacket packet = {};</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (bytes &gt; sizeof(packet)) bytes = sizeof(packet);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>nrf.read(&amp;packet, bytes);</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (packet.magic != ESB_BRIDGE_MAGIC) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>continue;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>String command = "";</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>uint8_t payloadLength = bytes - 4;</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>for (uint8_t i = 0; i &lt; payloadLength; i++) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>command += packet.payload[i];</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>command.trim();</p>
+<p class="p1">+</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>if (command.equals("toggle_ble")) {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>bool desiredBleState = !bleRunning;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>bool originalBleState = bleRunning;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>bleRunning = desiredBleState;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>String response = buildSettingsJson();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>bleRunning = originalBleState;</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>sendEsbBridgeResponse(packet.msgId, response);</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>lastRadioActivityTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>if (desiredBleState) {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>startBLE();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>} else {</p>
+<p class="p1">+<span class="Apple-converted-space">                </span>stopBLE();</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>} else {</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>bool shouldSendSettings = processCommandString(command, false);</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>String response = shouldSendSettings ? buildSettingsJson() : String("ok");</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>sendEsbBridgeResponse(packet.msgId, response);</p>
+<p class="p1">+<span class="Apple-converted-space">            </span>lastRadioActivityTime = millis();</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">        </span>break;</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>}</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>nrf.stopListening();</p>
+<p class="p1">+}</p>
+<p class="p1">+</p>
+<p class="p1"><span class="Apple-converted-space"> </span>void handleScreenFade() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Static variable to track the screen state from the previous call.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static ScreenState lastScreenState = screenState;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>// Static variable to store the brightness at the moment a fade begins.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>static uint16_t fadeStartBrightness_14bit = 0;</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// If a new fade sequence is starting, capture the current brightness.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (screenState != lastScreenState &amp;&amp;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>(screenState == FADING_UP || screenState == FADING_DOWN || screenState == FADING_REVERT)) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>fadeStartBrightness_14bit = currentBrightness_14bit;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// If not fading, there's nothing to do. Update state and exit.</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (screenState == BRIGHT || screenState == DIM) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>lastScreenState = screenState;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>return;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>unsigned long currentTimeUs = micros();</p>
+<p class="p1"><span class="Apple-converted-space">     </span>unsigned long elapsedTime = currentTimeUs - fadeStartTime;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>uint16_t targetBrightness_14bit = map(globalSettings.brightness, 3, 255, BRIGHTNESS_MIN_14BIT, BRIGHTNESS_MAX_14BIT);</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (elapsedTime &gt;= FADE_DURATION_US) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>// Fade is complete, snap to the final value.</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (screenState == FADING_DOWN) {</p>
+<p class="p1">@@ -3747,50 +3878,51 @@ void setup() {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>// This initial fade is temporary for the low battery warning, so direct analogWrite is ok.</p>
+<p class="p1"><span class="Apple-converted-space">         </span>uint16_t targetBrightness_14bit = map(globalSettings.brightness, 3, 255, BRIGHTNESS_MIN_14BIT, BRIGHTNESS_MAX_14BIT);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (targetBrightness_14bit &lt; BRIGHTNESS_MIN_14BIT) targetBrightness_14bit = BRIGHTNESS_MIN_14BIT;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>unsigned long fadeSetupStartTime = micros();</p>
+<p class="p1"><span class="Apple-converted-space">         </span>while(micros() - fadeSetupStartTime &lt; FADE_DURATION_US) {</p>
+<p class="p1"><span class="Apple-converted-space">             </span>float progress = (float)(micros() - fadeSetupStartTime) / FADE_DURATION_US;</p>
+<p class="p1"><span class="Apple-converted-space">             </span>uint16_t currentBrightness = mapFloat(progress, 0.0, 1.0, 0, targetBrightness_14bit);</p>
+<p class="p1"><span class="Apple-converted-space">             </span>analogWrite(TFT_BL, currentBrightness);</p>
+<p class="p1"><span class="Apple-converted-space">             </span>// Direct write is fine here</p>
+<p class="p1"><span class="Apple-converted-space">         </span>}</p>
+<p class="p1"><span class="Apple-converted-space">         </span>analogWrite(TFT_BL, targetBrightness_14bit);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>// Direct write is fine here</p>
+<p class="p1"><span class="Apple-converted-space">         </span>enterSystemOff(WAKE_LOW_BATTERY);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>drawMainScreenPotentiometerLayout(currentBankSettings, false);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>redrawAllPotValues(currentBankSettings);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>forceFullRedraw = true;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>drawTopStatusBar(TinyUSBDevice.mounted(), false, 0, 0, false);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>forceFullRedraw = false;</p>
+<p class="p1"><span class="Apple-converted-space">     </span>fadeStartTime = micros();</p>
+<p class="p1"><span class="Apple-converted-space"> </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space"> </span>void loop() {</p>
+<p class="p1"><span class="Apple-converted-space">     </span>handleWebUSBCommands();</p>
+<p class="p1">+<span class="Apple-converted-space">    </span>handleEsbBridgeCommands();</p>
+<p class="p1"><span class="Apple-converted-space">     </span>handleScreenFade();</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>unsigned long currentTime = millis();</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>// D0 button, USB, and battery logic</p>
+<p class="p1"><span class="Apple-converted-space">     </span>bool d0_isPressed_now = !digitalRead(0);</p>
+<p class="p1"><span class="Apple-converted-space">     </span>bool currentUSB = TinyUSBDevice.mounted();</p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (currentUSB) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>isAwaitingPostUnplugShutdown = false;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (currentTime - lastMidiActivityTime &gt; AUTO_SYSTEM_OFF_TIMEOUT_MS) { wasPluggedInLong = true; }</p>
+<p class="p1"><span class="Apple-converted-space">     </span>}</p>
+<p class="p2"><span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">     </span>if (lastUSBState &amp;&amp; !currentUSB) {</p>
+<p class="p1"><span class="Apple-converted-space">         </span>webusb.disconnect();<span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>if (wasPluggedInLong) { isAwaitingPostUnplugShutdown = true; lastMidiActivityTime = currentTime; wasPluggedInLong = false; }</p>
+<p class="p1"><span class="Apple-converted-space">         </span>lastBatterySampleTime = currentTime;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>analogOversampling(256);</p>
+<p class="p1"><span class="Apple-converted-space">         </span>long rawSum = 0;</p>
+<p class="p1"><span class="Apple-converted-space">         </span>for (int i = 0; i &lt; BATTERY_SAMPLE_COUNT ; i++) { rawSum += BATT_PIN_READ; delayMicroseconds(50); }</p>
+<p class="p1"><span class="Apple-converted-space">         </span>float adc_buf_avg = (float)rawSum / BATTERY_SAMPLE_COUNT;</p>
+<p class="p2"><span class="Apple-converted-space">         </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>// --- FIX START ---</p>
+<p class="p1"><span class="Apple-converted-space">         </span>// Restored the correct, more robust battery voltage calculation formula.</p>
+<p class="p1"><span class="Apple-converted-space">         </span>averagedBatteryVoltage = (adc_buf_avg / VBAT_ADC_RES) * VBAT_REF_VOLTAGE * VBAT_GAIN_DIVIDER * VBAT_CORRECTION_FACTOR;<span class="Apple-converted-space"> </span></p>
+<p class="p1"><span class="Apple-converted-space">         </span>// --- FIX END ---</p>
+</body>
+</html>
