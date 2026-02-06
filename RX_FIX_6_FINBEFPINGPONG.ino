@@ -22,53 +22,11 @@ struct GlobalSettings {
 // Ensure this does not overlap with your bootloader.
 #define GLOBAL_SETTINGS_ADDR 0x7F000
 const unsigned long LATENCY_LIMIT = 60000UL; 
-const uint8_t ESB_PAYLOAD_MAX = 32;
-const uint8_t ESB_COMMAND_DATA_MAX = 30;
-const uint8_t ESB_RESPONSE_DATA_MAX = 28;
-
-const uint8_t ESB_TYPE_CC = 0x01;
-const uint8_t ESB_TYPE_CMD = 0x02;
-const uint8_t ESB_TYPE_RESP = 0x03;
-const uint8_t ESB_TYPE_PING = 0x04;
-
-const uint8_t COMMAND_QUEUE_SIZE = 10;
-char commandQueue[COMMAND_QUEUE_SIZE][ESB_COMMAND_DATA_MAX + 1];
-uint8_t commandQueueHead = 0;
-uint8_t commandQueueTail = 0;
-
-char responseBuffer[512];
-uint16_t responseBufferIndex = 0;
-uint8_t expectedResponseChunk = 0;
-uint8_t expectedResponseChunkCount = 0;
 
 GlobalSettings globalSettings;
 
 uint8_t buffer[32];
 unsigned long lastPacketTime = 0;
-
-bool isCommandQueueFull() {
-    return ((commandQueueHead + 1) % COMMAND_QUEUE_SIZE) == commandQueueTail;
-}
-
-bool isCommandQueueEmpty() {
-    return commandQueueHead == commandQueueTail;
-}
-
-bool enqueueCommand(const char *command) {
-    if (isCommandQueueFull()) return false;
-    strncpy(commandQueue[commandQueueHead], command, ESB_COMMAND_DATA_MAX);
-    commandQueue[commandQueueHead][ESB_COMMAND_DATA_MAX] = '\0';
-    commandQueueHead = (commandQueueHead + 1) % COMMAND_QUEUE_SIZE;
-    return true;
-}
-
-bool dequeueCommand(char *outCommand) {
-    if (isCommandQueueEmpty()) return false;
-    strncpy(outCommand, commandQueue[commandQueueTail], ESB_COMMAND_DATA_MAX);
-    outCommand[ESB_COMMAND_DATA_MAX] = '\0';
-    commandQueueTail = (commandQueueTail + 1) % COMMAND_QUEUE_SIZE;
-    return true;
-}
 
 void saveSettings() {
     // 1. Erase the page (Reset to 0xFF)
@@ -108,8 +66,6 @@ void resetRadio() {
     nrf.begin();
     nrf.setPALevel(NRF_PA_MAX);
     nrf.setAutoAck(true);
-    nrf.enableDynamicPayloads(123);
-    nrf.enableAckPayload();
     nrf.setRetries(15, 15);
     nrf.setChannel(globalSettings.esbChannel);
     nrf.startListening();
@@ -129,8 +85,6 @@ void setup() {
     nrf.begin();
     nrf.setPALevel(NRF_PA_MAX);
     nrf.setAutoAck(true);
-    nrf.enableDynamicPayloads(123);
-    nrf.enableAckPayload();
     nrf.setRetries(15, 15);
     nrf.setChannel(globalSettings.esbChannel); 
     nrf.startListening();
@@ -180,95 +134,16 @@ void loop() {
                 webusb.print("{\"rssi\":" + String(rssi) + ",\"latency\":" + String(latency) + "}\n");
                 webusb.flush();
             }
-        } else {
-            String command = String(cmd) + webusb.readStringUntil('\n');
-            command.trim();
-            if (!enqueueCommand(command.c_str())) {
-                if (webusb.connected()) {
-                    webusb.print("error:queue_full\n");
-                    webusb.flush();
-                }
-            }
         }
     }
 
     // --- HANDLE NRF DATA ---
     if (nrf.available()) {
         while (nrf.available()) {
-            uint8_t bytes = nrf.getDynamicPayloadSize();
-            if (bytes == 0 || bytes > sizeof(buffer)) bytes = sizeof(buffer);
-            nrf.read(buffer, bytes);
+            nrf.read(buffer, 3);
+            sendCC(buffer[0], buffer[1], buffer[2]);
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
             lastPacketTime = millis();
-
-            uint8_t payloadType = buffer[0];
-            if (payloadType == ESB_TYPE_CC && bytes >= 5) {
-                sendCC(buffer[2], buffer[3], buffer[4]);
-                if (webusb.connected()) {
-                    webusb.print("cc:" + String(buffer[3]) + "," + String(buffer[4]) + "\n");
-                    webusb.flush();
-                }
-                digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-            } else if (payloadType == ESB_TYPE_RESP && bytes >= 4) {
-                uint8_t chunkIndex = buffer[1];
-                uint8_t chunkCount = buffer[2];
-                uint8_t dataLen = buffer[3];
-                if (dataLen > bytes - 4) dataLen = bytes - 4;
-
-                if (chunkIndex == 0) {
-                    responseBufferIndex = 0;
-                    expectedResponseChunk = 0;
-                    expectedResponseChunkCount = chunkCount;
-                }
-
-                if (chunkIndex != expectedResponseChunk) {
-                    responseBufferIndex = 0;
-                    expectedResponseChunk = 0;
-                    expectedResponseChunkCount = chunkCount;
-                    continue;
-                }
-
-                if (responseBufferIndex + dataLen < sizeof(responseBuffer)) {
-                    memcpy(responseBuffer + responseBufferIndex, buffer + 4, dataLen);
-                    responseBufferIndex += dataLen;
-                }
-
-                expectedResponseChunk++;
-                if (expectedResponseChunk >= expectedResponseChunkCount) {
-                    responseBuffer[responseBufferIndex] = '\0';
-                    if (strncmp(responseBuffer, "esb_channel_updated:", 20) == 0) {
-                        int newChannel = atoi(responseBuffer + 20);
-                        if (newChannel != globalSettings.esbChannel) {
-                            globalSettings.esbChannel = newChannel;
-                            saveSettings();
-                            resetRadio();
-                        }
-                    }
-                    if (webusb.connected()) {
-                        webusb.print(responseBuffer);
-                        webusb.flush();
-                    }
-                    responseBufferIndex = 0;
-                    expectedResponseChunk = 0;
-                    expectedResponseChunkCount = 0;
-                }
-            }
-
-            uint8_t ackPayload[ESB_PAYLOAD_MAX];
-            uint8_t ackLength = 2;
-            if (!isCommandQueueEmpty()) {
-                char commandBuffer[ESB_COMMAND_DATA_MAX + 1];
-                if (dequeueCommand(commandBuffer)) {
-                    uint8_t commandLength = strlen(commandBuffer);
-                    ackPayload[0] = ESB_TYPE_CMD;
-                    ackPayload[1] = commandLength;
-                    memcpy(ackPayload + 2, commandBuffer, commandLength);
-                    ackLength = 2 + commandLength;
-                }
-            } else {
-                ackPayload[0] = ESB_TYPE_PING;
-                ackPayload[1] = 0;
-            }
-            nrf.writeAckPayload(1, ackPayload, ackLength);
         }
     }
 }
