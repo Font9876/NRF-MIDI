@@ -5,6 +5,13 @@ nrf_to_nrf radio;
 
 uint8_t address[][6] = { "1Node", "2Node" };
 
+enum PayloadType : uint8_t {
+  PAYLOAD_PING = 0,
+  PAYLOAD_TEXT = 1,
+  PAYLOAD_COMMAND = 2,
+  PAYLOAD_RESPONSE = 3
+};
+
 struct PayloadStruct {
   uint8_t type;     
   uint8_t msgID;    
@@ -17,7 +24,7 @@ PayloadStruct ackPayload;
 
 // --- QUEUE SYSTEM ---
 #define MAX_QUEUE 10
-char msgQueue[MAX_QUEUE][64]; // Can hold 10 messages
+char msgQueue[MAX_QUEUE][64]; // Can hold 10 messages (commands)
 int queueHead = 0; // Where we write new msgs
 int queueTail = 0; // Where we read msgs to send
 uint8_t currentMsgID = 0; // The ID currently assigned to the text at queueTail
@@ -41,17 +48,17 @@ void setup() {
   radio.startListening(); 
 
   // Load initial empty ping so radio is ready
-  ackPayload.type = 0;
+  ackPayload.type = PAYLOAD_PING;
   ackPayload.msgID = 0; 
   ackPayload.ackID = 0;
   radio.writeAckPayload(1, &ackPayload, 3);
   
   Serial.println(F("--- RX NODE B (With Caching) ---"));
-  Serial.println(F("Traffic will be queued if Node A is offline."));
+  Serial.println(F("Web commands will be queued if Node A is offline."));
 }
 
 void loop() {
-  // --- 1. HANDLE USER INPUT (ADD TO QUEUE) ---
+  // --- 1. HANDLE USER INPUT (ADD COMMAND TO QUEUE) ---
   if (Serial.available()) {
     // Check if queue is full
     int nextHead = (queueHead + 1) % MAX_QUEUE;
@@ -59,7 +66,7 @@ void loop() {
       int len = Serial.readBytesUntil('\n', msgQueue[queueHead], 63);
       msgQueue[queueHead][len] = '\0';
       
-      Serial.print(F("[Queued]: "));
+      Serial.print(F("[Queued Command]: "));
       Serial.println(msgQueue[queueHead]);
       
       queueHead = nextHead; // Advance head
@@ -77,9 +84,11 @@ void loop() {
     if (bytes > sizeof(rxData)) bytes = sizeof(rxData);
     radio.read(&rxData, bytes);
 
-    // Print if it's text
-    if (rxData.type == 1) {
+    if (rxData.type == PAYLOAD_TEXT) {
       Serial.print(F("RX from A: "));
+      Serial.println(rxData.message);
+    } else if (rxData.type == PAYLOAD_RESPONSE) {
+      Serial.print(F("Response from A: "));
       Serial.println(rxData.message);
     }
 
@@ -109,7 +118,7 @@ void loop() {
       }
 
       // Load data from Queue into ACK
-      ackPayload.type = 1;
+      ackPayload.type = PAYLOAD_COMMAND;
       ackPayload.msgID = currentMsgID;
       strcpy(ackPayload.message, msgQueue[queueTail]);
       
@@ -121,7 +130,7 @@ void loop() {
       
     } else {
       // Queue empty, send Idle Ping
-      ackPayload.type = 0;
+      ackPayload.type = PAYLOAD_PING;
       ackPayload.msgID = 0;
       ackPayload.ackID = rxData.msgID; // Still need to Ack A's messages
       ackPayload.message[0] = '\0';
