@@ -420,16 +420,6 @@
       }
     };
 
-    const sendTxCommand = async (command) => {
-      if (txDevice) {
-        return sendCommand('tx', command);
-      }
-      if (rxDevice) {
-        return sendCommand('rx', command);
-      }
-      log("No TX or RX device connected to send command.");
-    };
-
     const sendChannelToRX = async (channel) => {
         if (!rxDevice) {
             log("RX device not connected. Cannot send channel.");
@@ -615,9 +605,7 @@
                   if (deviceType === 'tx') {
                     populateTxUI(parsedJson);
                   } else if (deviceType === 'rx') {
-                    if (parsedJson.activeBank !== undefined) {
-                      populateTxUI(parsedJson);
-                    } else if (parsedJson.rssi !== undefined) {
+                    if (parsedJson.rssi !== undefined) {
                       updateRxRSSI(parsedJson.rssi);
                     } else {
                       populateRxUI(parsedJson);
@@ -632,8 +620,8 @@
                   if (parts.length === 2) updateCCVisualizer(parseInt(parts[0]), parseInt(parts[1]));
                 }
               } else if (line.startsWith('bank_changed:')) {
-                if (deviceType === 'tx' || deviceType === 'rx') {
-                  setTimeout(() => sendTxCommand('get_settings'), 100);
+                if (deviceType === 'tx') {
+                  setTimeout(() => sendCommand('tx', 'get_settings'), 100);
                 }
               }
             }
@@ -713,7 +701,7 @@
           txKeepReading = true;
           txWasConnected = true;
           readLoop('tx');
-          await sendTxCommand("get_settings");
+          await sendCommand('tx', "get_settings");
         } else if (deviceType === 'rx') {
           rxDevice = deviceObj;
           rxInterfaceNumber = interfaceNum;
@@ -722,7 +710,6 @@
           rxKeepReading = true;
           rxWasConnected = true;
           readLoop('rx');
-          await sendTxCommand("get_settings");
           // Start polling for RSSI after successful connection
           if (rxRssiInterval) clearInterval(rxRssiInterval);
           rxRssiInterval = setInterval(() => {
@@ -911,8 +898,8 @@
 
       if (deviceType === 'tx') {
         let cmd = `set_${action}=${t.dataset.index ? t.dataset.index + ',' : ''}${t.value}`;
-        sendTxCommand(cmd);
-        if (action === 'cc' || action === 'label') setTimeout(() => sendTxCommand('get_settings'), 200);
+        sendCommand('tx', cmd);
+        if (action === 'cc' || action === 'label') setTimeout(() => sendCommand('tx', 'get_settings'), 200);
       } else if (deviceType === 'rx' && action === 'rx_esb_ch') {
         // Snap RX ESB Channel value to the nearest 5
         const rawValue = parseInt(t.value);
@@ -932,11 +919,11 @@
       if (target.classList.contains('bank-btn')) {
         document.querySelectorAll('.bank-btn').forEach(btn => btn.classList.remove('active'));
         target.classList.add('active');
-        sendTxCommand(`set_bank=${target.dataset.bank}`);
+        sendCommand('tx', `set_bank=${target.dataset.bank}`);
       } else if (target.id === 'bleToggleButton') {
-        sendTxCommand('toggle_ble');
+        sendCommand('tx', 'toggle_ble');
       } else if (target.id === 'startCalButton') {
-        sendTxCommand('start_cal');
+        sendCommand('tx', 'start_cal');
         log("Calibration started. Follow device instructions.");
       }
     });
@@ -991,3 +978,4 @@
   </script>
 </body>
 </html>
+
