@@ -10,6 +10,20 @@ nrf_to_nrf nrf;
 
 WEBUSB_URL_DEF(landingPage, 1, "diningwork.space/");
 
+const uint8_t ESB_BRIDGE_MAGIC = 0xFA;
+const uint8_t ESB_BRIDGE_PAYLOAD_SIZE = 28;
+const unsigned long ESB_BRIDGE_RESPONSE_TIMEOUT_MS = 250;
+
+struct EsbBridgePacket {
+    uint8_t magic;
+    uint8_t msgId;
+    uint8_t chunkIndex;
+    uint8_t totalChunks;
+    char payload[ESB_BRIDGE_PAYLOAD_SIZE];
+};
+
+uint8_t bridgeMsgId = 1;
+
 struct GlobalSettings {
     uint8_t esbChannel;
     uint8_t activeBank;
@@ -27,6 +41,75 @@ GlobalSettings globalSettings;
 
 uint8_t buffer[32];
 unsigned long lastPacketTime = 0;
+
+bool collectBridgeResponse(uint8_t msgId, String& response) {
+    response = "";
+    uint8_t expectedChunks = 0;
+    uint8_t receivedChunks = 0;
+    unsigned long startTime = millis();
+
+    while (millis() - startTime < ESB_BRIDGE_RESPONSE_TIMEOUT_MS) {
+        if (!nrf.available()) {
+            continue;
+        }
+
+        uint8_t bytes = nrf.getDynamicPayloadSize();
+        if (bytes == 0) {
+            continue;
+        }
+
+        if (bytes == 3) {
+            nrf.read(buffer, 3);
+            sendCC(buffer[0], buffer[1], buffer[2]);
+            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+            lastPacketTime = millis();
+            continue;
+        }
+
+        EsbBridgePacket packet = {};
+        if (bytes > sizeof(packet)) bytes = sizeof(packet);
+        nrf.read(&packet, bytes);
+
+        if (packet.magic != ESB_BRIDGE_MAGIC || packet.msgId != msgId) {
+            continue;
+        }
+
+        if (expectedChunks == 0) {
+            expectedChunks = packet.totalChunks;
+        }
+
+        uint8_t payloadLength = bytes > 4 ? bytes - 4 : 0;
+        for (uint8_t i = 0; i < payloadLength; i++) {
+            response += packet.payload[i];
+        }
+        receivedChunks++;
+
+        if (expectedChunks != 0 && receivedChunks >= expectedChunks) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool sendBridgeCommand(const String& command, String& response) {
+    if (command.length() > ESB_BRIDGE_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    EsbBridgePacket packet = {};
+    packet.magic = ESB_BRIDGE_MAGIC;
+    packet.msgId = bridgeMsgId++;
+    packet.chunkIndex = 0;
+    packet.totalChunks = 1;
+    command.toCharArray(packet.payload, ESB_BRIDGE_PAYLOAD_SIZE + 1);
+
+    nrf.stopListening();
+    nrf.write(&packet, 4 + command.length());
+    nrf.startListening();
+
+    return collectBridgeResponse(packet.msgId, response);
+}
 
 void saveSettings() {
     // 1. Erase the page (Reset to 0xFF)
@@ -67,6 +150,7 @@ void resetRadio() {
     nrf.setPALevel(NRF_PA_MAX);
     nrf.setAutoAck(true);
     nrf.setRetries(15, 15);
+    nrf.enableDynamicPayloads(32);
     nrf.setChannel(globalSettings.esbChannel);
     nrf.startListening();
 }
@@ -86,6 +170,7 @@ void setup() {
     nrf.setPALevel(NRF_PA_MAX);
     nrf.setAutoAck(true);
     nrf.setRetries(15, 15);
+    nrf.enableDynamicPayloads(32);
     nrf.setChannel(globalSettings.esbChannel); 
     nrf.startListening();
 
@@ -96,32 +181,24 @@ void loop() {
     // --- HANDLE WEBUSB COMMANDS ---
     if (webusb.available()) {
         char cmd = webusb.read();
-        
-        // COMMAND 'C': Change Channel
+
+        // COMMAND 'C': Change Channel (binary)
         if (cmd == 'C') {
             unsigned long timeout = millis();
             while (!webusb.available() && millis() - timeout < 10);
 
             if (webusb.available()) {
                 uint8_t newCh = webusb.read();
-                
-                // Only save if different (prevents wearing out flash)
                 if (newCh != globalSettings.esbChannel) {
                     globalSettings.esbChannel = newCh;
-                    
-                    // 1. Update Radio
                     nrf.setChannel(newCh);
                     nrf.startListening();
-                    
-                    // 2. Save to Flash (Erase + Write + Flush)
                     saveSettings(); 
-                    
-                    // 3. Reset radio to apply fully
                     resetRadio();
                 }
             }
         } 
-        // COMMAND 'R': Report Status
+        // COMMAND 'R': Report Status (binary)
         else if (cmd == 'R') {
             unsigned long latency = millis() - lastPacketTime;
             if (latency > LATENCY_LIMIT) {
@@ -134,16 +211,43 @@ void loop() {
                 webusb.print("{\"rssi\":" + String(rssi) + ",\"latency\":" + String(latency) + "}\n");
                 webusb.flush();
             }
+        } else if (cmd == '\n' || cmd == '\r') {
+            return;
+        } else {
+            String command = String((char)cmd) + webusb.readStringUntil('\n');
+            command.trim();
+            if (command.length() > 0) {
+                String response;
+                if (sendBridgeCommand(command, response)) {
+                    if (webusb.connected()) {
+                        webusb.print(response + "\n");
+                        webusb.flush();
+                    }
+                } else if (webusb.connected()) {
+                    webusb.print("{\"error\":\"tx_timeout\"}\n");
+                    webusb.flush();
+                }
+            }
         }
     }
 
     // --- HANDLE NRF DATA ---
     if (nrf.available()) {
         while (nrf.available()) {
-            nrf.read(buffer, 3);
-            sendCC(buffer[0], buffer[1], buffer[2]);
-            digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-            lastPacketTime = millis();
+            uint8_t bytes = nrf.getDynamicPayloadSize();
+            if (bytes == 0) {
+                continue;
+            }
+            if (bytes == 3) {
+                nrf.read(buffer, 3);
+                sendCC(buffer[0], buffer[1], buffer[2]);
+                digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+                lastPacketTime = millis();
+                continue;
+            }
+            EsbBridgePacket packet = {};
+            if (bytes > sizeof(packet)) bytes = sizeof(packet);
+            nrf.read(&packet, bytes);
         }
     }
 }
