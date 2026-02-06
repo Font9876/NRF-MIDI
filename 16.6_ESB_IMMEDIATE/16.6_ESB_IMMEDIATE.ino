@@ -97,6 +97,15 @@ const uint32_t NRF_IDLE_TIMEOUT_MS = 1000;
 const unsigned long AUTO_SYSTEM_OFF_TIMEOUT_MS = 60UL * 20UL * 1UL * 1000UL;
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 5000;
 const unsigned long POT_ACTIVITY_TIMEOUT_MS = 2000;
+const unsigned long ESB_KEEPALIVE_INTERVAL_MS = 50;
+const uint8_t ESB_PAYLOAD_MAX = 32;
+const uint8_t ESB_COMMAND_DATA_MAX = 30;
+const uint8_t ESB_RESPONSE_DATA_MAX = 28;
+
+const uint8_t ESB_TYPE_CC = 0x01;
+const uint8_t ESB_TYPE_CMD = 0x02;
+const uint8_t ESB_TYPE_RESP = 0x03;
+const uint8_t ESB_TYPE_PING = 0x04;
 
 const unsigned long POST_UNPLUG_ALIVE_MS = 60UL * 5UL * 1000UL;
 const unsigned long DIM_INACTIVITY_TIMEOUT_MS = 60UL * 2UL * 1000UL;
@@ -195,6 +204,19 @@ const uint8_t esbOptions[] = {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 
 static unsigned long lastCCButtonPressTime = 0;
 static int ccChangeCounter = 0;
 static bool ccButtonHeld = false;
+unsigned long lastEsbKeepaliveTime = 0;
+
+char esbResponseBuffer[512];
+uint16_t esbResponseLength = 0;
+uint8_t esbResponseChunkIndex = 0;
+uint8_t esbResponseChunkCount = 0;
+bool esbResponsePending = false;
+bool pendingEsbChannelChange = false;
+uint8_t pendingEsbChannel = 0;
+bool requestStartBle = false;
+unsigned long startBleDelayTime = 0;
+
+enum CommandOrigin { COMMAND_ORIGIN_WEBUSB, COMMAND_ORIGIN_ESB };
 
 uint8_t selectedPotForCal = 0;
 bool isEditingMinCal = true;
@@ -315,10 +337,17 @@ void performEsbSweep();
 void drawEsbSweepScreen(uint8_t channel, uint8_t sample, uint8_t acks, bool initial);
 void drawEsbConnectMenu();
 void partialRedrawEsbConnectMenu(uint8_t oldCursor, uint8_t newCursor);
+String buildSettingsJson();
+void queueEsbResponse(const String &line);
+void sendSettingsToOrigin(CommandOrigin origin);
+void sendLineToOrigin(const String &line, CommandOrigin origin);
+void processCommandString(const String &command, CommandOrigin origin);
+void handleEsbAckPayload();
+void sendEsbPayload(const uint8_t *payload, uint8_t length);
+void sendEsbKeepalive();
 
-// --- WebUSB Functions ---
-void sendSettingsToWeb() {
-    if (!webusb.connected()) return;
+// --- WebUSB + ESB Response Helpers ---
+String buildSettingsJson() {
     String json = "{";
     json += "\"activeBank\":" + String(globalSettings.activeBank) + ",";
     json += "\"brightness\":" + String(globalSettings.brightness) + ",";
@@ -349,8 +378,35 @@ void sendSettingsToWeb() {
     }
     json += "]";
     json += "}\n";
+    return json;
+}
+
+void queueEsbResponse(const String &line) {
+    size_t len = line.length();
+    if (len >= sizeof(esbResponseBuffer)) {
+        len = sizeof(esbResponseBuffer) - 1;
+    }
+    memcpy(esbResponseBuffer, line.c_str(), len);
+    esbResponseBuffer[len] = '\0';
+    esbResponseLength = len;
+    esbResponseChunkIndex = 0;
+    esbResponseChunkCount = (esbResponseLength + ESB_RESPONSE_DATA_MAX - 1) / ESB_RESPONSE_DATA_MAX;
+    esbResponsePending = esbResponseChunkCount > 0;
+}
+
+void sendSettingsToWeb() {
+    if (!webusb.connected()) return;
+    String json = buildSettingsJson();
     webusb.print(json);
     webusb.flush();
+}
+
+void sendSettingsToOrigin(CommandOrigin origin) {
+    if (origin == COMMAND_ORIGIN_WEBUSB) {
+        sendSettingsToWeb();
+        return;
+    }
+    queueEsbResponse(buildSettingsJson());
 }
 
 void setBacklight(uint16_t value) {
@@ -583,8 +639,6 @@ void performEsbSweep() {
 }
 
 void handleWebUSBCommands() {
-    static bool requestStartBle = false;
-    static unsigned long startBleDelayTime = 0;
     const unsigned long BLE_START_DELAY_MS = 1;
 
     if (requestStartBle && millis() - startBleDelayTime >= BLE_START_DELAY_MS) {
@@ -596,85 +650,176 @@ void handleWebUSBCommands() {
     if (webusb.available()) {
         String command = webusb.readStringUntil('\n');
         command.trim();
-
-        if (command.equals("get_settings")) {
-            sendSettingsToWeb();
-        } else if (command.startsWith("set_brightness=")) {
-            int brightness_8bit = command.substring(15).toInt();
-            brightness_8bit = constrain(brightness_8bit, 3, 255);
-
-            if (globalSettings.brightness != brightness_8bit) {
-                brightnessBeforeFade_14bit = currentBrightness_14bit;
-                globalSettings.brightness = brightness_8bit;
-                screenState = FADING_UP;
-                fadeStartTime = micros();
-            }
-        } else if (command.startsWith("set_midi_ch=")) {
-            int channel = command.substring(12).toInt();
-            currentBankSettings.midiChannel = constrain(channel, 1, 16);
-        } else if (command.startsWith("set_cc=")) {
-            int firstComma = command.indexOf(',');
-            int index = command.substring(7, firstComma).toInt();
-            int value = command.substring(firstComma + 1).toInt();
-            if (index >= 0 && index < TOTAL_ASSIGNABLE_INPUTS) {
-                currentBankSettings.assignableCCs[index] = constrain(value, 0, 127);
-                saveCurrentBankSettings();
-            }
-        } else if (command.startsWith("set_label=")) {
-            int firstComma = command.indexOf(',');
-            int index = command.substring(10, firstComma).toInt();
-            String label = command.substring(firstComma + 1);
-            if (index >= 0 && index < TOTAL_ASSIGNABLE_INPUTS) {
-                if (index < NUM_ANALOG_POTS) {
-                    strncpy(currentBankSettings.potLabels[index], label.c_str(), POT_LABEL_LENGTH);
-                    currentBankSettings.potLabels[index][POT_LABEL_LENGTH] = '\0';
-                } else {
-                    strncpy(currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS], label.c_str(), POT_LABEL_LENGTH);
-                    currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS][POT_LABEL_LENGTH] = '\0';
-                }
-                saveCurrentBankSettings();
-                forceFullRedraw = true;
-            }
-        } else if (command.startsWith("set_bank=")) {
-            int bank = command.substring(9).toInt();
-            if (bank >= 0 && bank < NUM_BANKS) {
-                globalSettings.activeBank = bank;
-                saveGlobalSettings();
-                loadSettings();
-                activeMidiSettings = &currentBankSettings;
-                updateMainScreenLabelsOnly(currentBankSettings, false);
-                forceFullRedraw = true;
-                if (webusb.connected()) {
-                    webusb.print("bank_changed:" + String(globalSettings.activeBank) + "\n");
-                    webusb.flush();
-                }
-                sendSettingsToWeb();
-            }
-        } else if (command.startsWith("set_button_mode=")) {
-            int mode = command.substring(16).toInt();
-            currentBankSettings.buttonMode = constrain(mode, 0, 1);
-            saveCurrentBankSettings();
-        } else if (command.startsWith("set_esb_ch=")) {
-            int esb_ch = command.substring(11).toInt();
-            globalSettings.esbChannel = esb_ch;
-            saveGlobalSettings();
-            resetRadio();
-        } else if (command.equals("toggle_ble")) {
-            if (bleRunning) {
-                stopBLE();
-            } else {
-                requestStartBle = true;
-                startBleDelayTime = millis();
-            }
-        } else if (command.equals("start_cal")) {
-            currentAppMode = SETUP_MENU;
-            currentSetupSubMode = CALIBRATION_MAIN;
-            menuCursor = 1;
-            subMenuCursor = 1;
-            drawCalibrationMenu();
-            setupStartTime = millis();
-        }
+        processCommandString(command, COMMAND_ORIGIN_WEBUSB);
     }
+}
+
+void sendLineToOrigin(const String &line, CommandOrigin origin) {
+    if (origin == COMMAND_ORIGIN_WEBUSB) {
+        if (webusb.connected()) {
+            webusb.print(line);
+            webusb.flush();
+        }
+        return;
+    }
+    queueEsbResponse(line);
+}
+
+void processCommandString(const String &command, CommandOrigin origin) {
+    if (command.equals("get_settings")) {
+        sendSettingsToOrigin(origin);
+    } else if (command.startsWith("set_brightness=")) {
+        int brightness_8bit = command.substring(15).toInt();
+        brightness_8bit = constrain(brightness_8bit, 3, 255);
+
+        if (globalSettings.brightness != brightness_8bit) {
+            brightnessBeforeFade_14bit = currentBrightness_14bit;
+            globalSettings.brightness = brightness_8bit;
+            screenState = FADING_UP;
+            fadeStartTime = micros();
+        }
+    } else if (command.startsWith("set_midi_ch=")) {
+        int channel = command.substring(12).toInt();
+        currentBankSettings.midiChannel = constrain(channel, 1, 16);
+    } else if (command.startsWith("set_cc=")) {
+        int firstComma = command.indexOf(',');
+        int index = command.substring(7, firstComma).toInt();
+        int value = command.substring(firstComma + 1).toInt();
+        if (index >= 0 && index < TOTAL_ASSIGNABLE_INPUTS) {
+            currentBankSettings.assignableCCs[index] = constrain(value, 0, 127);
+            saveCurrentBankSettings();
+        }
+    } else if (command.startsWith("set_label=")) {
+        int firstComma = command.indexOf(',');
+        int index = command.substring(10, firstComma).toInt();
+        String label = command.substring(firstComma + 1);
+        if (index >= 0 && index < TOTAL_ASSIGNABLE_INPUTS) {
+            if (index < NUM_ANALOG_POTS) {
+                strncpy(currentBankSettings.potLabels[index], label.c_str(), POT_LABEL_LENGTH);
+                currentBankSettings.potLabels[index][POT_LABEL_LENGTH] = '\0';
+            } else {
+                strncpy(currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS], label.c_str(), POT_LABEL_LENGTH);
+                currentBankSettings.buttonLabels[index - NUM_ANALOG_POTS][POT_LABEL_LENGTH] = '\0';
+            }
+            saveCurrentBankSettings();
+            forceFullRedraw = true;
+        }
+    } else if (command.startsWith("set_bank=")) {
+        int bank = command.substring(9).toInt();
+        if (bank >= 0 && bank < NUM_BANKS) {
+            globalSettings.activeBank = bank;
+            saveGlobalSettings();
+            loadSettings();
+            activeMidiSettings = &currentBankSettings;
+            updateMainScreenLabelsOnly(currentBankSettings, false);
+            forceFullRedraw = true;
+            sendLineToOrigin("bank_changed:" + String(globalSettings.activeBank) + "\n", origin);
+            sendSettingsToOrigin(origin);
+        }
+    } else if (command.startsWith("set_button_mode=")) {
+        int mode = command.substring(16).toInt();
+        currentBankSettings.buttonMode = constrain(mode, 0, 1);
+        saveCurrentBankSettings();
+    } else if (command.startsWith("set_esb_ch=")) {
+        int esb_ch = command.substring(11).toInt();
+        globalSettings.esbChannel = esb_ch;
+        saveGlobalSettings();
+        if (origin == COMMAND_ORIGIN_ESB) {
+            pendingEsbChannelChange = true;
+            pendingEsbChannel = esb_ch;
+            sendLineToOrigin("esb_channel_updated:" + String(esb_ch) + "\n", origin);
+        } else {
+            resetRadio();
+        }
+    } else if (command.equals("toggle_ble")) {
+        if (bleRunning) {
+            stopBLE();
+        } else {
+            requestStartBle = true;
+            startBleDelayTime = millis();
+        }
+    } else if (command.equals("start_cal")) {
+        currentAppMode = SETUP_MENU;
+        currentSetupSubMode = CALIBRATION_MAIN;
+        menuCursor = 1;
+        subMenuCursor = 1;
+        drawCalibrationMenu();
+        setupStartTime = millis();
+    }
+}
+
+void sendEsbPayload(const uint8_t *payload, uint8_t length) {
+    if (!radioActive) {
+        resetRadio();
+    }
+    nrf.write(const_cast<uint8_t *>(payload), length);
+    lastRadioActivityTime = millis();
+    handleEsbAckPayload();
+}
+
+void handleEsbAckPayload() {
+    if (!nrf.available()) return;
+
+    uint8_t payload[ESB_PAYLOAD_MAX];
+    uint8_t bytes = nrf.getDynamicPayloadSize();
+    if (bytes == 0 || bytes > sizeof(payload)) {
+        bytes = sizeof(payload);
+    }
+    nrf.read(payload, bytes);
+    if (payload[0] != ESB_TYPE_CMD || bytes < 2) return;
+
+    uint8_t dataLen = payload[1];
+    if (dataLen > ESB_COMMAND_DATA_MAX) dataLen = ESB_COMMAND_DATA_MAX;
+    if (dataLen > bytes - 2) dataLen = bytes - 2;
+    char commandBuffer[ESB_COMMAND_DATA_MAX + 1];
+    memcpy(commandBuffer, payload + 2, dataLen);
+    commandBuffer[dataLen] = '\0';
+    String command(commandBuffer);
+    command.trim();
+    if (command.length() > 0) {
+        processCommandString(command, COMMAND_ORIGIN_ESB);
+    }
+}
+
+void sendEsbKeepalive() {
+    if (TinyUSBDevice.mounted() || bleRunning) return;
+    if (currentAppMode == ESB_SWEEP) return;
+    unsigned long now = millis();
+    if (now - lastEsbKeepaliveTime < ESB_KEEPALIVE_INTERVAL_MS) return;
+    lastEsbKeepaliveTime = now;
+
+    if (esbResponsePending && esbResponseChunkCount > 0) {
+        uint16_t offset = esbResponseChunkIndex * ESB_RESPONSE_DATA_MAX;
+        uint8_t dataLen = ESB_RESPONSE_DATA_MAX;
+        if (offset + dataLen > esbResponseLength) {
+            dataLen = esbResponseLength - offset;
+        }
+
+        uint8_t payload[ESB_PAYLOAD_MAX];
+        payload[0] = ESB_TYPE_RESP;
+        payload[1] = esbResponseChunkIndex;
+        payload[2] = esbResponseChunkCount;
+        payload[3] = dataLen;
+        memcpy(payload + 4, esbResponseBuffer + offset, dataLen);
+        sendEsbPayload(payload, 4 + dataLen);
+
+        esbResponseChunkIndex++;
+        if (esbResponseChunkIndex >= esbResponseChunkCount) {
+            esbResponsePending = false;
+            esbResponseChunkIndex = 0;
+            esbResponseChunkCount = 0;
+            esbResponseLength = 0;
+            if (pendingEsbChannelChange) {
+                globalSettings.esbChannel = pendingEsbChannel;
+                pendingEsbChannelChange = false;
+                resetRadio();
+            }
+        }
+        return;
+    }
+
+    uint8_t pingPayload[2] = {ESB_TYPE_PING, 0};
+    sendEsbPayload(pingPayload, sizeof(pingPayload));
 }
 
 void line_state_callback(bool connected) {}
@@ -1320,6 +1465,8 @@ void resetRadio() {
     nrf.setPALevel(NRF_PA_MAX);
     nrf_radio_txpower_set(NRF_RADIO, NRF_RADIO_TXPOWER_POS8DBM);
     nrf.setAutoAck(true); 
+    nrf.enableDynamicPayloads(123);
+    nrf.enableAckPayload();
     nrf.setRetries(0, 5); // Set standard retries
     nrf.setChannel(globalSettings.esbChannel); // Apply the ESB channel from global settings
     nrf.stopListening(); 
@@ -3642,8 +3789,8 @@ void sendCC(uint8_t cc, uint8_t value) {
         lastMidiActivityTime = millis();
     } else {
         resetRadio();
-        uint8_t nrf_payload[3] = {msg[0], msg[1], msg[2]};
-        nrf.write(nrf_payload, 3);
+        uint8_t nrf_payload[5] = {ESB_TYPE_CC, 3, msg[0], msg[1], msg[2]};
+        sendEsbPayload(nrf_payload, sizeof(nrf_payload));
         lastRadioActivityTime = millis();
         lastMidiActivityTime = millis();
     }
@@ -3692,7 +3839,10 @@ void setup() {
     NRF_POWER->TASKS_LOWPWR = 1;
     nrf.begin(); nrf.setPALevel(NRF_PA_MAX);
     nrf_radio_txpower_set(NRF_RADIO, NRF_RADIO_TXPOWER_POS8DBM);
-    nrf.setAutoAck(true); nrf.setRetries(0, 5);
+    nrf.setAutoAck(true);
+    nrf.enableDynamicPayloads(123);
+    nrf.enableAckPayload();
+    nrf.setRetries(0, 5);
     nrf.setChannel(globalSettings.esbChannel);
     nrf.stopListening(); nrf.powerDown();
     radioActive = false;
@@ -3770,6 +3920,7 @@ void setup() {
 void loop() {
     handleWebUSBCommands();
     handleScreenFade();
+    sendEsbKeepalive();
 
     unsigned long currentTime = millis();
 
